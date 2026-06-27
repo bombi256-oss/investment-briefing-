@@ -11,18 +11,22 @@ jobs:
     steps:
       - name: Refresh token and send KakaoTalk
         run: |
+          REFRESH=$(echo "${{ secrets.KAKAO_REFRESH_TOKEN }}" | tr -d '[:space:]')
+          
           RESPONSE=$(curl -s -X POST "https://kauth.kakao.com/oauth/token" \
             -d "grant_type=refresh_token" \
             -d "client_id=${{ secrets.KAKAO_CLIENT_ID }}" \
             -d "client_secret=${{ secrets.KAKAO_CLIENT_SECRET }}" \
-            -d "refresh_token=${{ secrets.KAKAO_REFRESH_TOKEN }}")
+            -d "refresh_token=${REFRESH}")
+          
+          echo "Response: $RESPONSE"
           
           ACCESS=$(echo $RESPONSE | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['access_token'])")
           TODAY=$(TZ='Asia/Seoul' date '+%Y-%m-%d %H:%M')
           
-          MSG="{\"object_type\":\"text\",\"text\":\"📊 투자 브리핑 $TODAY\n\n✅ 국내·미국 증시 분석 업데이트 완료\n✅ 월배당 ETF 브리핑 업데이트 완료\n\nCowork에서 상세 내용을 확인하세요.\",\"link\":{\"web_url\":\"https://example.com\"}}"
+          MSG="{\"object_type\":\"text\",\"text\":\"📊 투자 브리핑 ${TODAY}\n\n✅ 국내·미국 증시 분석 업데이트 완료\n✅ 월배당 ETF 브리핑 업데이트 완료\n\nCowork에서 상세 내용을 확인하세요.\",\"link\":{\"web_url\":\"https://example.com\"}}"
           
           curl -s -X POST "https://kapi.kakao.com/v2/api/talk/memo/default/send" \
-            -H "Authorization: Bearer $ACCESS" \
+            -H "Authorization: Bearer ${ACCESS}" \
             -H "Content-Type: application/x-www-form-urlencoded" \
             --data-urlencode "template_object=$MSG"
