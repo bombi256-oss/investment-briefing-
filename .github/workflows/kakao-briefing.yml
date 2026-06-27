@@ -99,7 +99,7 @@ jobs:
           ACCESS=$(echo $RESPONSE | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['access_token'])")
           TODAY=$(TZ='Asia/Seoul' date '+%Y-%m-%d %H:%M')
           URL="https://bombi256-oss.github.io/investment-briefing-/"
-          MSG="{\"object_type\":\"text\",\"text\":\"📊 투자 브리핑 ${TODAY}\n\n✅ 국내 증시 Top 5\n✅ 미국 증시 Top 9\n✅ 월배당 ETF Top 3\n\n👇 링크 클릭으로 상세 확인\",\"link\":{\"web_url\":\"${URL}\",\"mobile_web_url\":\"${URL}\"}}"
+          MSG="{\"object_type\":\"feed\",\"content\":{\"title\":\"📊 투자 브리핑 ${TODAY}\",\"description\":\"✅ 국내 증시 Top 5  ✅ 미국 증시 Top 9  ✅ 월배당 ETF Top 3\",\"image_url\":\"https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?w=800\",\"link\":{\"web_url\":\"${URL}\",\"mobile_web_url\":\"${URL}\"}},\"buttons\":[{\"title\":\"📱 브리핑 상세 보기\",\"link\":{\"web_url\":\"${URL}\",\"mobile_web_url\":\"${URL}\"}}]}"
           curl -s -X POST "https://kapi.kakao.com/v2/api/talk/memo/default/send" \
             -H "Authorization: Bearer ${ACCESS}" \
             -H "Content-Type: application/x-www-form-urlencoded" \
