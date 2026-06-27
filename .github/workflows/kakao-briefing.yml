@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
     steps:
       - uses: actions/checkout@v4
 
@@ -18,123 +19,104 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install yfinance
+        run: pip install yfinance requests
 
-      - name: Generate HTML briefing page
+      - name: Generate briefing page and send KakaoTalk
+        env:
+          KAKAO_CLIENT_ID: ${{ secrets.KAKAO_CLIENT_ID }}
+          KAKAO_CLIENT_SECRET: ${{ secrets.KAKAO_CLIENT_SECRET }}
+          KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
         run: |
           python3 << 'EOF'
-          import yfinance as yf
+          import os, json, requests, yfinance as yf
           from datetime import datetime
-          import os
+          import pytz
 
-          now = datetime.utcnow()
-          date_str = now.strftime('%Y-%m-%d %H:%M UTC')
+          kst = pytz.timezone('Asia/Seoul')
+          now = datetime.now(kst).strftime('%Y-%m-%d %H:%M')
 
-          kr_tickers = {'삼성전자':'005930.KS','SK하이닉스':'000660.KS','현대차':'005380.KS','삼성바이오로직스':'207940.KS','HD현대중공업':'329180.KS'}
-          us_tickers = {'NVIDIA':'NVDA','Apple':'AAPL','Alphabet':'GOOG','Microsoft':'MSFT','Amazon':'AMZN','TSMC':'TSM','Broadcom':'AVGO','Meta':'META','Tesla':'TSLA'}
-          etf_tickers = {'JEPQ (나스닥100 월배당)':'JEPQ','JEPI (S&P500 월배당)':'JEPI','QYLD (나스닥100 고배당)':'QYLD'}
+          # ── 토큰 갱신 ──────────────────────────────────────
+          resp = requests.post("https://kauth.kakao.com/oauth/token", data={
+              "grant_type": "refresh_token",
+              "client_id": os.environ["KAKAO_CLIENT_ID"],
+              "client_secret": os.environ["KAKAO_CLIENT_SECRET"],
+              "refresh_token": os.environ["KAKAO_REFRESH_TOKEN"].strip(),
+          })
+          token_data = resp.json()
+          print("Token response:", token_data)
+          access_token = token_data["access_token"]
 
-          def get_rows(tickers, is_kr=False):
-              rows = ''
-              for name, ticker in tickers.items():
-                  try:
-                      info = yf.Ticker(ticker).fast_info
-                      price = info.last_price
-                      prev = info.previous_close
-                      chg = (price - prev) / prev * 100 if prev else 0
-                      color = '#e74c3c' if chg < 0 else '#27ae60'
-                      arrow = '▼' if chg < 0 else '▲'
-                      p_str = f"{price:,.0f}원" if is_kr else f"${price:,.2f}"
-                      rows += f"<tr><td><b>{name}</b><br><small style='color:#999'>{ticker}</small></td><td style='text-align:right'>{p_str}</td><td style='text-align:right;color:{color};font-weight:bold'>{arrow} {abs(chg):.2f}%</td></tr>"
-                  except:
-                      rows += f"<tr><td><b>{name}</b></td><td colspan='2' style='text-align:center;color:#999'>데이터 없음</td></tr>"
-              return rows
+          # ── 주가 데이터 수집 ───────────────────────────────
+          tickers = {
+              "삼성전자": "005930.KS", "SK하이닉스": "000660.KS",
+              "NVDA": "NVDA", "AAPL": "AAPL", "MSFT": "MSFT",
+              "JEPQ": "JEPQ", "JEPI": "JEPI",
+          }
+          rows = []
+          for name, sym in tickers.items():
+              try:
+                  t = yf.Ticker(sym)
+                  h = t.history(period="2d")
+                  if len(h) >= 2:
+                      p = h["Close"].iloc[-1]
+                      prev = h["Close"].iloc[-2]
+                      chg = (p - prev) / prev * 100
+                      rows.append(f"{name}: ${p:.2f} ({chg:+.1f}%)")
+              except:
+                  pass
 
+          summary = " | ".join(rows[:5])
+
+          # ── HTML 페이지 생성 ───────────────────────────────
           html = f"""<!DOCTYPE html>
-          <html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-          <title>투자 브리핑</title>
-          <style>*{{box-sizing:border-box;margin:0;padding:0}}body{{font-family:-apple-system,sans-serif;background:#f0f4f8}}
-          .hdr{{background:linear-gradient(135deg,#1a1a2e,#0f3460);color:#fff;padding:20px;text-align:center}}
-          .hdr h1{{font-size:1.5em}}
-          .hdr p{{font-size:.8em;opacity:.8;margin-top:5px}}
-          .card{{margin:12px;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)}}
-          .card-hdr{{padding:12px 16px;font-weight:bold;font-size:.9em;color:#fff}}
-          table{{width:100%;border-collapse:collapse}}
-          td{{padding:10px 14px;border-bottom:1px solid #f5f5f5;font-size:.85em}}
-          tr:last-child td{{border:none}}
-          .footer{{text-align:center;padding:20px;font-size:.75em;color:#aaa}}</style></head>
-          <body>
-          <div class="hdr"><h1>📊 투자 브리핑</h1><p>업데이트: {date_str}</p></div>
-          <div class="card"><div class="card-hdr" style="background:#2c3e50">🇰🇷 국내 증시</div>
-          <table>{get_rows(kr_tickers, True)}</table></div>
-          <div class="card"><div class="card-hdr" style="background:#1a5276">🇺🇸 미국 증시</div>
-          <table>{get_rows(us_tickers)}</table></div>
-          <div class="card"><div class="card-hdr" style="background:#1e8449">💸 월배당 ETF Top 3</div>
-          <table>{get_rows(etf_tickers)}</table></div>
-          <div class="footer">※ 투자 권유 아님 · 정보 제공 목적<br>평일 오전 8:30 자동 업데이트</div>
+          <html lang="ko"><head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>투자 브리핑 {now}</title>
+          <style>
+          body{{font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:16px;background:#0a0a0a;color:#eee}}
+          h1{{font-size:1.2em;color:#ffd700}}
+          .card{{background:#1a1a1a;border-radius:12px;padding:16px;margin:12px 0}}
+          .tag{{display:inline-block;background:#2a2a5a;color:#aaf;border-radius:6px;padding:2px 8px;font-size:.8em}}
+          .row{{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #333}}
+          .up{{color:#ff6b6b}} .dn{{color:#4ecdc4}}
+          </style></head><body>
+          <h1>📊 투자 브리핑</h1>
+          <p style="color:#888;font-size:.85em">{now} KST</p>
+          {"".join(f'<div class="row"><span>{r.split(":")[0]}</span><span>{r.split(":",1)[1]}</span></div>' for r in rows)}
           </body></html>"""
 
-          os.makedirs('docs', exist_ok=True)
-          with open('docs/index.html', 'w', encoding='utf-8') as f:
+          os.makedirs("docs", exist_ok=True)
+          with open("docs/index.html", "w", encoding="utf-8") as f:
               f.write(html)
-          print("Done")
+          print("HTML generated")
+
+          # ── 카카오톡 전송 ──────────────────────────────────
+          url = "https://bombi256-oss.github.io/investment-briefing-/"
+          template = {
+              "object_type": "feed",
+              "content": {
+                  "title": f"📊 투자 브리핑 {now}",
+                  "description": summary or "국내/미국 증시 + ETF 현황",
+                  "image_url": "https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?w=800",
+                  "link": {"web_url": url, "mobile_web_url": url}
+              },
+              "buttons": [
+                  {"title": "📱 상세 보기", "link": {"web_url": url, "mobile_web_url": url}}
+              ]
+          }
+          r = requests.post(
+              "https://kapi.kakao.com/v2/api/talk/memo/default/send",
+              headers={"Authorization": f"Bearer {access_token}"},
+              data={"template_object": json.dumps(template, ensure_ascii=False)}
+          )
+          print("KakaoTalk result:", r.text)
           EOF
 
-      - name: Commit and push
+      - name: Commit HTML
         run: |
           git config user.email "action@github.com"
           git config user.name "GitHub Action"
           git add docs/index.html
           git diff --staged --quiet || git commit -m "Update briefing $(date '+%Y-%m-%d')"
           git push
-
-      - name: Send KakaoTalk
-        run: |
-          REFRESH=$(echo "${{ secrets.KAKAO_REFRESH_TOKEN }}" | tr -d '[:space:]')
-          RESPONSE=$(curl -s -X POST "https://kauth.kakao.com/oauth/token" \
-            -d "grant_type=refresh_token" \
-            -d "client_id=${{ secrets.KAKAO_CLIENT_ID }}" \
-            -d "client_secret=${{ secrets.KAKAO_CLIENT_SECRET }}" \
-            -d "refresh_token=${REFRESH}")
-          ACCESS=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['access_token'])")
-          
-          python3 << 'PYEOF'
-          import os, json, urllib.request, urllib.parse
-          
-          url = "https://bombi256-oss.github.io/investment-briefing-/"
-          
-          template = {
-            "object_type": "feed",
-            "content": {
-              "title": "📊 오늘의 투자 브리핑",
-              "description": "✅ 국내 증시  ✅ 미국 증시  ✅ 월배당 ETF\n상세 내용을 확인하세요.",
-              "image_url": "https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?w=800&q=80",
-              "link": {
-                "web_url": url,
-                "mobile_web_url": url
-              }
-            },
-            "buttons": [
-              {
-                "title": "📱 브리핑 상세 보기",
-                "link": {
-                  "web_url": url,
-                  "mobile_web_url": url
-                }
-              }
-            ]
-          }
-          
-          access_token = os.environ["ACCESS_TOKEN"]
-          data = urllib.parse.urlencode({"template_object": json.dumps(template, ensure_ascii=False)}).encode()
-          req = urllib.request.Request(
-            "https://kapi.kakao.com/v2/api/talk/memo/default/send",
-            data=data,
-            headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/x-www-form-urlencoded"}
-          )
-          with urllib.request.urlopen(req) as res:
-            result = json.loads(res.read())
-            print("Result:", result)
-          PYEOF
-        env:
-          ACCESS_TOKEN: ${{ env.KAKAO_ACCESS }}
