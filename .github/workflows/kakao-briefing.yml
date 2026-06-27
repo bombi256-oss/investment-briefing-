@@ -96,11 +96,45 @@ jobs:
             -d "client_id=${{ secrets.KAKAO_CLIENT_ID }}" \
             -d "client_secret=${{ secrets.KAKAO_CLIENT_SECRET }}" \
             -d "refresh_token=${REFRESH}")
-          ACCESS=$(echo $RESPONSE | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['access_token'])")
-          TODAY=$(TZ='Asia/Seoul' date '+%Y-%m-%d %H:%M')
-          URL="https://bombi256-oss.github.io/investment-briefing-/"
-          MSG="{\"object_type\":\"feed\",\"content\":{\"title\":\"📊 투자 브리핑 ${TODAY}\",\"description\":\"✅ 국내 증시 Top 5  ✅ 미국 증시 Top 9  ✅ 월배당 ETF Top 3\",\"image_url\":\"https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?w=800\",\"link\":{\"web_url\":\"${URL}\",\"mobile_web_url\":\"${URL}\"}},\"buttons\":[{\"title\":\"📱 브리핑 상세 보기\",\"link\":{\"web_url\":\"${URL}\",\"mobile_web_url\":\"${URL}\"}}]}"
-          curl -s -X POST "https://kapi.kakao.com/v2/api/talk/memo/default/send" \
-            -H "Authorization: Bearer ${ACCESS}" \
-            -H "Content-Type: application/x-www-form-urlencoded" \
-            --data-urlencode "template_object=$MSG"
+          ACCESS=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['access_token'])")
+          
+          python3 << 'PYEOF'
+          import os, json, urllib.request, urllib.parse
+          
+          url = "https://bombi256-oss.github.io/investment-briefing-/"
+          
+          template = {
+            "object_type": "feed",
+            "content": {
+              "title": "📊 오늘의 투자 브리핑",
+              "description": "✅ 국내 증시  ✅ 미국 증시  ✅ 월배당 ETF\n상세 내용을 확인하세요.",
+              "image_url": "https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?w=800&q=80",
+              "link": {
+                "web_url": url,
+                "mobile_web_url": url
+              }
+            },
+            "buttons": [
+              {
+                "title": "📱 브리핑 상세 보기",
+                "link": {
+                  "web_url": url,
+                  "mobile_web_url": url
+                }
+              }
+            ]
+          }
+          
+          access_token = os.environ["ACCESS_TOKEN"]
+          data = urllib.parse.urlencode({"template_object": json.dumps(template, ensure_ascii=False)}).encode()
+          req = urllib.request.Request(
+            "https://kapi.kakao.com/v2/api/talk/memo/default/send",
+            data=data,
+            headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/x-www-form-urlencoded"}
+          )
+          with urllib.request.urlopen(req) as res:
+            result = json.loads(res.read())
+            print("Result:", result)
+          PYEOF
+        env:
+          ACCESS_TOKEN: ${{ env.KAKAO_ACCESS }}
