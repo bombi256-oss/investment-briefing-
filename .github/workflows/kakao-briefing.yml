@@ -8,24 +8,98 @@ on:
 jobs:
   send-briefing:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - name: Refresh token and send KakaoTalk
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install yfinance
+
+      - name: Generate HTML briefing page
+        run: |
+          python3 << 'EOF'
+          import yfinance as yf
+          from datetime import datetime
+          import os
+
+          now = datetime.utcnow()
+          date_str = now.strftime('%Y-%m-%d %H:%M UTC')
+
+          kr_tickers = {'삼성전자':'005930.KS','SK하이닉스':'000660.KS','현대차':'005380.KS','삼성바이오로직스':'207940.KS','HD현대중공업':'329180.KS'}
+          us_tickers = {'NVIDIA':'NVDA','Apple':'AAPL','Alphabet':'GOOG','Microsoft':'MSFT','Amazon':'AMZN','TSMC':'TSM','Broadcom':'AVGO','Meta':'META','Tesla':'TSLA'}
+          etf_tickers = {'JEPQ (나스닥100 월배당)':'JEPQ','JEPI (S&P500 월배당)':'JEPI','QYLD (나스닥100 고배당)':'QYLD'}
+
+          def get_rows(tickers, is_kr=False):
+              rows = ''
+              for name, ticker in tickers.items():
+                  try:
+                      info = yf.Ticker(ticker).fast_info
+                      price = info.last_price
+                      prev = info.previous_close
+                      chg = (price - prev) / prev * 100 if prev else 0
+                      color = '#e74c3c' if chg < 0 else '#27ae60'
+                      arrow = '▼' if chg < 0 else '▲'
+                      p_str = f"{price:,.0f}원" if is_kr else f"${price:,.2f}"
+                      rows += f"<tr><td><b>{name}</b><br><small style='color:#999'>{ticker}</small></td><td style='text-align:right'>{p_str}</td><td style='text-align:right;color:{color};font-weight:bold'>{arrow} {abs(chg):.2f}%</td></tr>"
+                  except:
+                      rows += f"<tr><td><b>{name}</b></td><td colspan='2' style='text-align:center;color:#999'>데이터 없음</td></tr>"
+              return rows
+
+          html = f"""<!DOCTYPE html>
+          <html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+          <title>투자 브리핑</title>
+          <style>*{{box-sizing:border-box;margin:0;padding:0}}body{{font-family:-apple-system,sans-serif;background:#f0f4f8}}
+          .hdr{{background:linear-gradient(135deg,#1a1a2e,#0f3460);color:#fff;padding:20px;text-align:center}}
+          .hdr h1{{font-size:1.5em}}
+          .hdr p{{font-size:.8em;opacity:.8;margin-top:5px}}
+          .card{{margin:12px;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08)}}
+          .card-hdr{{padding:12px 16px;font-weight:bold;font-size:.9em;color:#fff}}
+          table{{width:100%;border-collapse:collapse}}
+          td{{padding:10px 14px;border-bottom:1px solid #f5f5f5;font-size:.85em}}
+          tr:last-child td{{border:none}}
+          .footer{{text-align:center;padding:20px;font-size:.75em;color:#aaa}}</style></head>
+          <body>
+          <div class="hdr"><h1>📊 투자 브리핑</h1><p>업데이트: {date_str}</p></div>
+          <div class="card"><div class="card-hdr" style="background:#2c3e50">🇰🇷 국내 증시</div>
+          <table>{get_rows(kr_tickers, True)}</table></div>
+          <div class="card"><div class="card-hdr" style="background:#1a5276">🇺🇸 미국 증시</div>
+          <table>{get_rows(us_tickers)}</table></div>
+          <div class="card"><div class="card-hdr" style="background:#1e8449">💸 월배당 ETF Top 3</div>
+          <table>{get_rows(etf_tickers)}</table></div>
+          <div class="footer">※ 투자 권유 아님 · 정보 제공 목적<br>평일 오전 8:30 자동 업데이트</div>
+          </body></html>"""
+
+          os.makedirs('docs', exist_ok=True)
+          with open('docs/index.html', 'w', encoding='utf-8') as f:
+              f.write(html)
+          print("Done")
+          EOF
+
+      - name: Commit and push
+        run: |
+          git config user.email "action@github.com"
+          git config user.name "GitHub Action"
+          git add docs/index.html
+          git diff --staged --quiet || git commit -m "Update briefing $(date '+%Y-%m-%d')"
+          git push
+
+      - name: Send KakaoTalk
         run: |
           REFRESH=$(echo "${{ secrets.KAKAO_REFRESH_TOKEN }}" | tr -d '[:space:]')
-          
           RESPONSE=$(curl -s -X POST "https://kauth.kakao.com/oauth/token" \
             -d "grant_type=refresh_token" \
             -d "client_id=${{ secrets.KAKAO_CLIENT_ID }}" \
             -d "client_secret=${{ secrets.KAKAO_CLIENT_SECRET }}" \
             -d "refresh_token=${REFRESH}")
-          
-          echo "Response: $RESPONSE"
-          
           ACCESS=$(echo $RESPONSE | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['access_token'])")
           TODAY=$(TZ='Asia/Seoul' date '+%Y-%m-%d %H:%M')
-          
-          MSG="{\"object_type\":\"text\",\"text\":\"📊 투자 브리핑 ${TODAY}\n\n✅ 국내·미국 증시 분석 업데이트 완료\n✅ 월배당 ETF 브리핑 업데이트 완료\n\nCowork에서 상세 내용을 확인하세요.\",\"link\":{\"web_url\":\"https://example.com\"}}"
-          
+          URL="https://bombi256-oss.github.io/investment-briefing-/"
+          MSG="{\"object_type\":\"text\",\"text\":\"📊 투자 브리핑 ${TODAY}\n\n✅ 국내 증시 Top 5\n✅ 미국 증시 Top 9\n✅ 월배당 ETF Top 3\n\n👇 링크 클릭으로 상세 확인\",\"link\":{\"web_url\":\"${URL}\",\"mobile_web_url\":\"${URL}\"}}"
           curl -s -X POST "https://kapi.kakao.com/v2/api/talk/memo/default/send" \
             -H "Authorization: Bearer ${ACCESS}" \
             -H "Content-Type: application/x-www-form-urlencoded" \
